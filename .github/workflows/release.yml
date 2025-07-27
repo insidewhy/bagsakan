@@ -4,6 +4,8 @@ name: Build and Release
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main ]
 
@@ -102,14 +104,14 @@ jobs:
         ./target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary_name }} --help
 
     - name: Create release artifact
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
       run: |
         mkdir -p dist
         cp target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary_name }} dist/bagsakan-${{ matrix.platform.name }}
         chmod +x dist/bagsakan-${{ matrix.platform.name }}
 
     - name: Upload binary artifact
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
       uses: actions/upload-artifact@v4
       with:
         name: bagsakan-${{ matrix.platform.name }}
@@ -120,7 +122,7 @@ jobs:
   release:
     name: Create Release
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
 
     permissions:
@@ -135,7 +137,77 @@ jobs:
         path: dist
         merge-multiple: true
 
-    - name: Create Release
+    # Versioned release for tags
+    - name: Delete existing release if exists
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: dev-drprasad/delete-tag-and-release@v1.0
+      with:
+        tag_name: ${{ github.ref_name }}
+        delete_release: true
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
+
+    - name: Create Versioned Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        name: "Release ${{ github.ref_name }}"
+        body: |
+          ## Release ${{ github.ref_name }}
+
+          ### Available Binaries
+          - **Linux (glibc)**: `bagsakan-linux-glibc` - For most Linux distributions
+          - **Linux (musl)**: `bagsakan-linux-musl` - For Alpine Linux and static linking
+          - **macOS (Intel)**: `bagsakan-macos-x64` - For Intel-based Macs
+          - **macOS (Apple Silicon)**: `bagsakan-macos-arm64` - For M1/M2/M3 Macs
+
+          ### Installation
+
+          #### Linux (most distributions)
+          ```bash
+          curl -L -o bagsakan https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/bagsakan-linux-glibc
+          chmod +x bagsakan
+          sudo mv bagsakan /usr/local/bin/
+          ```
+
+          #### macOS (Intel)
+          ```bash
+          curl -L -o bagsakan https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/bagsakan-macos-x64
+          chmod +x bagsakan
+          sudo mv bagsakan /usr/local/bin/
+          ```
+
+          #### macOS (Apple Silicon)
+          ```bash
+          curl -L -o bagsakan https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/bagsakan-macos-arm64
+          chmod +x bagsakan
+          sudo mv bagsakan /usr/local/bin/
+          ```
+
+          #### Alpine Linux / Docker
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/bagsakan-linux-musl
+          chmod +x bagsakan-linux-musl
+          mv bagsakan-linux-musl /usr/local/bin/bagsakan
+          ```
+        files: |
+          dist/bagsakan-*
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+
+    # Development release for main branch
+    - name: Delete existing development release if exists
+      if: github.ref == 'refs/heads/main'
+      uses: dev-drprasad/delete-tag-and-release@v1.0
+      with:
+        tag_name: build-${{ github.sha }}
+        delete_release: true
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
+
+    - name: Create Development Release
+      if: github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: build-${{ github.sha }}
@@ -183,7 +255,17 @@ jobs:
         draft: false
         prerelease: true
 
+    - name: Delete existing latest release if exists
+      if: github.ref == 'refs/heads/main'
+      uses: dev-drprasad/delete-tag-and-release@v1.0
+      with:
+        tag_name: latest
+        delete_release: true
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
+
     - name: Update Latest Release
+      if: github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: latest
