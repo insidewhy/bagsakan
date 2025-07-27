@@ -2,6 +2,13 @@
 name = "bagsakan"
 version = "0.1.1"
 edition = "2021"
+description = "A Rust-based utility to generate typescript validator functions from typescript type definitions"
+license = "MIT"
+authors = ["insidewhy <github@chilon.net>"]
+keywords = ["types", "type-validator"]
+categories = ["command-line-utilities"]
+repository = "https://github.com/insidewhy/bagsakan"
+readme = "readme.md"
 
 [dependencies]
 oxc_parser = "0.78.0"
