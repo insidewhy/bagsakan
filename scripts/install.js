@@ -65,7 +65,7 @@ function download(url, dest) {
 async function install() {
   try {
     const platform = getPlatform()
-    const version = package.version.startsWith('v') ? package.version : `v${package.version}`
+    const { version } = package
     const binaryName = `bagsakan-${platform}`
 
     console.log(`Installing bagsakan ${version} for ${platform}...`)

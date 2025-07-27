@@ -1,6 +1,6 @@
 {
   "name": "bagsakan",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Generate TypeScript validation functions from interfaces",
   "bin": {
     "bagsakan": "./bin/bagsakan"
@@ -8,7 +8,7 @@
   "scripts": {
     "postinstall": "node scripts/install.js",
     "format-check": "prettier --check .",
-    "format": "pnpm format-check --write"
+    "format": "pnpm format-check --write && cargo fmt"
   },
   "repository": {
     "type": "git",
