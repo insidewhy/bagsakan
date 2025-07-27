@@ -1,0 +1,272 @@
+use crate::parser::{InterfaceInfo, PropertyInfo, ValidatorFunction};
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::Path;
+
+pub struct ValidatorGenerator {
+    interfaces: HashMap<String, InterfaceInfo>,
+}
+
+impl ValidatorGenerator {
+    pub fn new(interfaces: HashMap<String, InterfaceInfo>) -> Self {
+        Self { interfaces }
+    }
+
+    pub fn generate_validators(
+        &self,
+        validator_functions: &[ValidatorFunction],
+        output_file_path: &str,
+    ) -> String {
+        let mut output = String::new();
+
+        let mut validators: Vec<_> = validator_functions
+            .iter()
+            .filter_map(|vf| {
+                self.interfaces
+                    .get(&vf.interface_name)
+                    .map(|interface| (vf, interface))
+            })
+            .collect();
+
+        validators.sort_by(|a, b| a.0.name.cmp(&b.0.name));
+
+        // Generate imports
+        let imports = self.generate_imports(&validators, output_file_path);
+        if !imports.is_empty() {
+            output.push_str(&imports);
+            output.push_str("\n\n");
+        }
+
+        // Generate validators
+        for (i, (validator, interface)) in validators.iter().enumerate() {
+            if i > 0 {
+                output.push_str("\n\n");
+            }
+            output.push_str(&self.generate_validator(&validator.name, interface));
+        }
+
+        output
+    }
+
+    fn generate_imports(
+        &self,
+        validators: &[(&ValidatorFunction, &InterfaceInfo)],
+        output_file_path: &str,
+    ) -> String {
+        use std::collections::{HashMap, HashSet};
+        use std::path::Path;
+
+        let output_path = Path::new(output_file_path);
+        let output_dir = output_path.parent().unwrap_or(Path::new(""));
+
+        // Group interfaces by source file
+        let mut imports_by_file: HashMap<String, HashSet<String>> = HashMap::new();
+
+        // Collect all referenced types
+        let mut referenced_types = HashSet::new();
+        for (_, interface) in validators {
+            referenced_types.insert(interface.name.clone());
+
+            // Check properties for referenced types
+            for prop in &interface.properties {
+                self.collect_referenced_types(&prop.type_annotation, &mut referenced_types);
+            }
+        }
+
+        // Group interfaces by their source files
+        for interface_name in &referenced_types {
+            if let Some(interface) = self.interfaces.get(interface_name) {
+                let source_path = Path::new(&interface.file_path);
+
+                // Calculate relative path from output file to source file
+                let relative_path = if let Some(rel) = pathdiff::diff_paths(source_path, output_dir)
+                {
+                    rel
+                } else {
+                    source_path.to_path_buf()
+                };
+
+                // Convert to import path (remove .ts extension and use forward slashes)
+                let import_path = relative_path
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .trim_end_matches(".ts")
+                    .to_string();
+
+                // Add ./ prefix if not already present
+                let import_path =
+                    if !import_path.starts_with("./") && !import_path.starts_with("../") {
+                        format!("./{}", import_path)
+                    } else {
+                        import_path
+                    };
+
+                imports_by_file
+                    .entry(import_path)
+                    .or_insert_with(HashSet::new)
+                    .insert(interface_name.clone());
+            }
+        }
+
+        // Generate import statements
+        let mut imports = Vec::new();
+        for (file, types) in imports_by_file {
+            let mut type_list: Vec<_> = types.into_iter().collect();
+            type_list.sort();
+            imports.push(format!(
+                "import type {{ {} }} from '{}';",
+                type_list.join(", "),
+                file
+            ));
+        }
+        imports.sort();
+
+        imports.join("\n")
+    }
+
+    fn collect_referenced_types(&self, type_str: &str, referenced_types: &mut HashSet<String>) {
+        if type_str.ends_with("[]") {
+            let element_type = &type_str[..type_str.len() - 2];
+            self.collect_referenced_types(element_type, referenced_types);
+        } else if type_str.contains(" | ") {
+            for t in type_str.split(" | ") {
+                if !t.starts_with('\'') {
+                    self.collect_referenced_types(t, referenced_types);
+                }
+            }
+        } else if self.interfaces.contains_key(type_str) {
+            referenced_types.insert(type_str.to_string());
+        }
+    }
+
+    fn generate_validator(&self, function_name: &str, interface: &InterfaceInfo) -> String {
+        let mut body = String::new();
+
+        body.push_str(&format!(
+            "export function {}(value: unknown): value is {} {{\n",
+            function_name, interface.name
+        ));
+        body.push_str("  if (typeof value !== 'object' || value === null) {\n");
+        body.push_str("    return false;\n");
+        body.push_str("  }\n\n");
+        body.push_str("  const obj = value as any;\n\n");
+
+        for prop in &interface.properties {
+            body.push_str(&self.generate_property_check(prop));
+        }
+
+        body.push_str("  return true;\n");
+        body.push_str("}");
+
+        body
+    }
+
+    fn generate_property_check(&self, prop: &PropertyInfo) -> String {
+        let mut check = String::new();
+        let validation =
+            self.get_inline_validation(&prop.type_annotation, &format!("obj.{}", prop.name));
+
+        if prop.optional {
+            check.push_str(&format!(
+                "  if ('{}' in obj && obj.{} !== undefined) {{\n",
+                prop.name, prop.name
+            ));
+            check.push_str(&format!("    if (!{}) {{\n", validation));
+            check.push_str("      return false;\n");
+            check.push_str("    }\n");
+            check.push_str("  }\n\n");
+        } else {
+            check.push_str(&format!(
+                "  if (!('{}' in obj) || !{}) {{\n",
+                prop.name, validation
+            ));
+            check.push_str("    return false;\n");
+            check.push_str("  }\n\n");
+        }
+
+        check
+    }
+
+    fn get_inline_validation(&self, type_str: &str, value_expr: &str) -> String {
+        match type_str {
+            "string" => format!("(typeof {} === 'string')", value_expr),
+            "number" => format!("(typeof {} === 'number')", value_expr),
+            "boolean" => format!("(typeof {} === 'boolean')", value_expr),
+            "any" => "true".to_string(),
+            "void" => format!("({} === undefined)", value_expr),
+            "null" => format!("({} === null)", value_expr),
+            "undefined" => format!("({} === undefined)", value_expr),
+            _ if type_str.ends_with("[]") => {
+                let element_type = &type_str[..type_str.len() - 2];
+                if self.is_simple_type(element_type) {
+                    let element_check = self.get_simple_type_check(element_type);
+                    format!(
+                        "(Array.isArray({}) && {}.every({}))",
+                        value_expr, value_expr, element_check
+                    )
+                } else {
+                    format!(
+                        "(Array.isArray({}) && {}.every(validate{}))",
+                        value_expr, value_expr, element_type
+                    )
+                }
+            }
+            _ if type_str.contains(" | ") => {
+                let types: Vec<&str> = type_str.split(" | ").collect();
+                let checks: Vec<String> = types
+                    .iter()
+                    .map(|t| {
+                        if t.starts_with('\'') && t.ends_with('\'') {
+                            format!("{} === {}", value_expr, t)
+                        } else {
+                            self.get_inline_validation(t, value_expr)
+                        }
+                    })
+                    .collect();
+                format!("({})", checks.join(" || "))
+            }
+            _ if type_str.starts_with('\'') && type_str.ends_with('\'') => {
+                format!("({} === {})", value_expr, type_str)
+            }
+            _ => {
+                if self.interfaces.contains_key(type_str) {
+                    format!("validate{}({})", type_str, value_expr)
+                } else {
+                    "true".to_string()
+                }
+            }
+        }
+    }
+
+    fn is_simple_type(&self, type_str: &str) -> bool {
+        matches!(
+            type_str,
+            "string" | "number" | "boolean" | "any" | "void" | "null" | "undefined"
+        )
+    }
+
+    fn get_simple_type_check(&self, type_str: &str) -> String {
+        match type_str {
+            "string" => "(v: any) => typeof v === 'string'".to_string(),
+            "number" => "(v: any) => typeof v === 'number'".to_string(),
+            "boolean" => "(v: any) => typeof v === 'boolean'".to_string(),
+            "any" => "() => true".to_string(),
+            "void" => "(v: any) => v === undefined".to_string(),
+            "null" => "(v: any) => v === null".to_string(),
+            "undefined" => "(v: any) => v === undefined".to_string(),
+            _ => "() => true".to_string(),
+        }
+    }
+
+    pub fn write_to_file(
+        &self,
+        path: &Path,
+        content: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
+        Ok(())
+    }
+}

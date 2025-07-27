@@ -1,0 +1,3 @@
+validatorPattern = "validate%(type)"
+sourceFiles = "test_src/*.ts"
+validatorFile = "test_src/validators.ts"

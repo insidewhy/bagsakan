@@ -1,0 +1,18 @@
+[package]
+name = "bagsakan"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+oxc_parser = "0.78.0"
+oxc_ast = "0.78.0"
+oxc_allocator = "0.78.0"
+oxc_span = "0.78.0"
+oxc_syntax = "0.78.0"
+oxc_traverse = "0.78.0"
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+glob = "0.3"
+regex = "1.10"
+clap = { version = "4", features = ["derive"] }
+pathdiff = "0.2"
