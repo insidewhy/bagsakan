@@ -80,7 +80,7 @@ async function install() {
 
     // Construct download URL
     const repo = package.repository.url.match(/github\.com[:/](.+?)\.git/)[1]
-    const downloadUrl = `https://github.com/${repo}/releases/download/${version}/${binaryName}`
+    const downloadUrl = `https://github.com/${repo}/releases/download/v${version}/${binaryName}`
 
     console.log(`Downloading from ${downloadUrl}...`)
 
