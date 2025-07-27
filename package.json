@@ -1,0 +1,40 @@
+{
+  "name": "bagsakan",
+  "version": "0.1.0",
+  "description": "Generate TypeScript validation functions from interfaces",
+  "bin": {
+    "bagsakan": "./bin/bagsakan"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "format-check": "prettier --check .",
+    "format": "pnpm format-check --write"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_USERNAME/bagsakan.git"
+  },
+  "keywords": [
+    "typescript",
+    "validation",
+    "interface",
+    "type-safety",
+    "code-generation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/bagsakan/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/bagsakan#readme",
+  "files": [
+    "bin",
+    "scripts"
+  ],
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  }
+}

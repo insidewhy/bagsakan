@@ -2,8 +2,42 @@
 
 This is a rust project to implement static validation functions based on typescript interfaces.
 
+## Installation
+
+### Using npm/pnpm/yarn
+
+```bash
+# npm
+npm install -D bagsakan
+
+# pnpm
+pnpm add -D bagsakan
+
+# yarn
+yarn add -D bagsakan
+```
+
+### Manual Installation
+
+Download the appropriate binary for your platform from the [releases page](https://github.com/YOUR_USERNAME/bagsakan/releases).
+
+## Usage
+
+After installation, you can use bagsakan via:
+
+```bash
+# Using npx/pnpm exec
+npx bagsakan
+pnpm exec bagsakan
+
+# Or if installed globally
+bagsakan
+```
+
+## Overview
+
 Unlike other projects that need to use a transformer via `ts-patch`, this code statically generates one file containing validators which can be viewed by the user and stored in the repo.
-The file containing the validator functions must be recreated if any interfaces are changed or new interface validators are added to the code and can be stored in the git repo.
+The file containing the validator functions must be recreated if any interfaces are changed or new interface validators are added to the code.
 
 This project has a toml configuration file which looks like this (the following shows the defaults):
 

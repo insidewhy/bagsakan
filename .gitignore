@@ -1,3 +1,6 @@
 /target
 node_modules
 validators.ts
+bin/bagsakan
+*.swp
+.DS_Store

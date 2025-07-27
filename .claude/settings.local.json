@@ -4,7 +4,8 @@
       "Bash(mkdir:*)",
       "Bash(cargo:*)",
       "Bash(pnpm install:*)",
-      "Bash(pnpm --dir /home/james/projects/bagsakan/test_src run test)"
+      "Bash(pnpm --dir /home/james/projects/bagsakan/test_src run test)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }
