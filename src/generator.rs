@@ -175,13 +175,25 @@ impl ValidatorGenerator {
             self.get_inline_validation(&prop.type_annotation, &format!("obj.{}", prop.name));
 
         if prop.optional {
-            check.push_str(&format!(
-                "  if ('{}' in obj && obj.{} !== undefined) {{\n",
-                prop.name, prop.name
-            ));
-            check.push_str(&format!("    if (!({})) {{\n", validation));
-            check.push_str("      return false;\n");
-            check.push_str("    }\n");
+            // For optional properties, combine the undefined check with type validation
+            let needs_complex_check = !matches!(
+                prop.type_annotation.as_str(),
+                "string" | "number" | "boolean" | "null" | "undefined"
+            );
+            if needs_complex_check {
+                check.push_str(&format!(
+                    "  if (obj.{} !== undefined && !({})) {{\n",
+                    prop.name, validation
+                ));
+            } else {
+                let negated_validation = self
+                    .get_negated_validation(&prop.type_annotation, &format!("obj.{}", prop.name));
+                check.push_str(&format!(
+                    "  if (obj.{} !== undefined && {}) {{\n",
+                    prop.name, negated_validation
+                ));
+            }
+            check.push_str("    return false;\n");
             check.push_str("  }\n\n");
         } else {
             // For required properties, we can skip the 'in' check if the type check would fail for undefined
