@@ -45,9 +45,11 @@ This project has a toml configuration file which looks like this (the following 
 validatorPattern = "validate%(type)"
 sourceFiles = "src/**/*.ts"
 validatorFile = "src/validators.ts"
+useJsExtensions = false
 ```
 
 - Uses the `oxc-parser` parse all typescript files that match `sourceFiles`.
 - Finds functions that match `validatorPattern` where `%(type)` matches `[a-z][A-Z]+` and is used to identify which `interface` in the typescript code is being validated.
 - Generates a function with the same name as the validator pattern match that produces code to statically verify the pattern.
 - Stores all functions it found, in alphabetical order, in the `validatorFile` path.
+- The generated validator file will use `import type` to import any types it uses, if `useJsExtensions` is `true` then the import will end with `.js`.

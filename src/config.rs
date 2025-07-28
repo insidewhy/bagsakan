@@ -13,6 +13,9 @@ pub struct Config {
 
     #[serde(default = "default_validator_file")]
     pub validator_file: String,
+
+    #[serde(default = "default_use_js_extensions")]
+    pub use_js_extensions: bool,
 }
 
 fn default_validator_pattern() -> String {
@@ -27,12 +30,17 @@ fn default_validator_file() -> String {
     "src/validators.ts".to_string()
 }
 
+fn default_use_js_extensions() -> bool {
+    false
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             validator_pattern: default_validator_pattern(),
             source_files: default_source_files(),
             validator_file: default_validator_file(),
+            use_js_extensions: default_use_js_extensions(),
         }
     }
 }

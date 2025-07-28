@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Validator pattern: {}", config.validator_pattern);
     println!("  Source files: {}", config.source_files);
     println!("  Validator file: {}", config.validator_file);
+    println!("  Use JS extensions: {}", config.use_js_extensions);
 
     let pattern_regex = config.get_pattern_regex();
     let mut parser = TypeScriptParser::new(&pattern_regex);
@@ -78,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             unique_validators.len()
         );
 
-        let generator = ValidatorGenerator::new(parser.interfaces);
+        let generator = ValidatorGenerator::new(parser.interfaces, config.use_js_extensions);
         let output =
             generator.generate_validators(&parser.validator_functions, &config.validator_file);
 

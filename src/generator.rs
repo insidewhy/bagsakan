@@ -5,11 +5,15 @@ use std::path::Path;
 
 pub struct ValidatorGenerator {
     interfaces: HashMap<String, InterfaceInfo>,
+    use_js_extensions: bool,
 }
 
 impl ValidatorGenerator {
-    pub fn new(interfaces: HashMap<String, InterfaceInfo>) -> Self {
-        Self { interfaces }
+    pub fn new(interfaces: HashMap<String, InterfaceInfo>, use_js_extensions: bool) -> Self {
+        Self {
+            interfaces,
+            use_js_extensions,
+        }
     }
 
     pub fn generate_validators(
@@ -95,19 +99,21 @@ impl ValidatorGenerator {
                 };
 
                 // Convert to import path (remove .ts extension and use forward slashes)
-                let import_path = relative_path
+                let mut import_path = relative_path
                     .to_string_lossy()
                     .replace('\\', "/")
                     .trim_end_matches(".ts")
                     .to_string();
 
                 // Add ./ prefix if not already present
-                let import_path =
-                    if !import_path.starts_with("./") && !import_path.starts_with("../") {
-                        format!("./{}", import_path)
-                    } else {
-                        import_path
-                    };
+                if !import_path.starts_with("./") && !import_path.starts_with("../") {
+                    import_path = format!("./{}", import_path);
+                }
+
+                // Add .js extension if configured
+                if self.use_js_extensions {
+                    import_path.push_str(".js");
+                }
 
                 imports_by_file
                     .entry(import_path)
