@@ -5,7 +5,14 @@
       "Bash(cargo:*)",
       "Bash(pnpm install:*)",
       "Bash(pnpm --dir /home/james/projects/bagsakan/test_src run test)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(BAGSAKAN_DEBUG=1 cargo run)",
+      "Bash(grep:*)",
+      "Bash(/home/james/projects/bagsakan/target/debug/bagsakan:*)",
+      "Bash(/home/james/projects/bagsakan/target/release/bagsakan:*)",
+      "Bash(./target/release/bagsakan)",
+      "Bash(pushd:*)",
+      "Bash(popd:*)"
     ],
     "deny": []
   }

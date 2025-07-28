@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nFound {} TypeScript files", file_count);
     println!("Found {} interfaces", parser.interfaces.len());
     println!(
-        "Found {} validator functions to generate",
+        "Found {} validator function calls",
         parser.validator_functions.len()
     );
 
@@ -67,6 +67,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if !parser.validator_functions.is_empty() {
+        // Deduplicate validator function names for display
+        let unique_validators: std::collections::HashSet<_> = parser
+            .validator_functions
+            .iter()
+            .map(|vf| &vf.name)
+            .collect();
+        println!(
+            "\nFound {} unique validator functions to generate",
+            unique_validators.len()
+        );
+
         let generator = ValidatorGenerator::new(parser.interfaces);
         let output =
             generator.generate_validators(&parser.validator_functions, &config.validator_file);
@@ -80,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     } else {
         println!(
-            "\nNo validator functions found matching pattern: {}",
+            "\nNo validator function calls found matching pattern: {}",
             config.validator_pattern
         );
     }

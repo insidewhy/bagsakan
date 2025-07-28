@@ -65,12 +65,36 @@ impl TypeScriptParser {
     }
 
     fn process_statement(&mut self, stmt: &Statement, file_path: &str) {
-        if let Some(decl) = stmt.as_declaration() {
-            self.process_declaration(decl, file_path);
-        } else if let Some(module_decl) = stmt.as_module_declaration() {
-            if let ModuleDeclaration::ExportNamedDeclaration(export) = module_decl {
-                if let Some(decl) = &export.declaration {
+        match stmt {
+            Statement::ExpressionStatement(expr_stmt) => {
+                self.process_expression(&expr_stmt.expression);
+            }
+            Statement::ReturnStatement(ret_stmt) => {
+                if let Some(arg) = &ret_stmt.argument {
+                    self.process_expression(arg);
+                }
+            }
+            Statement::IfStatement(if_stmt) => {
+                self.process_expression(&if_stmt.test);
+                self.process_statement(&if_stmt.consequent, file_path);
+                if let Some(alt) = &if_stmt.alternate {
+                    self.process_statement(alt, file_path);
+                }
+            }
+            Statement::BlockStatement(block) => {
+                for stmt in &block.body {
+                    self.process_statement(stmt, file_path);
+                }
+            }
+            _ => {
+                if let Some(decl) = stmt.as_declaration() {
                     self.process_declaration(decl, file_path);
+                } else if let Some(module_decl) = stmt.as_module_declaration() {
+                    if let ModuleDeclaration::ExportNamedDeclaration(export) = module_decl {
+                        if let Some(decl) = &export.declaration {
+                            self.process_declaration(decl, file_path);
+                        }
+                    }
                 }
             }
         }
@@ -82,17 +106,16 @@ impl TypeScriptParser {
                 self.process_interface(interface, file_path);
             }
             Declaration::FunctionDeclaration(func) => {
-                if let Some(id) = &func.id {
-                    let func_name = id.name.as_str();
-                    if let Some(captures) = self.validator_pattern.captures(func_name) {
-                        if let Some(interface_name) = captures.get(1) {
-                            self.validator_functions.push(ValidatorFunction {
-                                name: func_name.to_string(),
-                                interface_name: interface_name.as_str().to_string(),
-                            });
-                        }
-                    }
+                // Check function body for validator calls
+                if let Some(body) = &func.body {
+                    self.process_function_body(body);
                 }
+            }
+            Declaration::ClassDeclaration(class) => {
+                self.process_class(class);
+            }
+            Declaration::VariableDeclaration(var_decl) => {
+                self.process_variable_declaration(var_decl);
             }
             _ => {}
         }
@@ -133,6 +156,131 @@ impl TypeScriptParser {
                 file_path: file_path.to_string(),
             },
         );
+    }
+
+    fn process_function_body(&mut self, body: &FunctionBody) {
+        for stmt in &body.statements {
+            self.process_statement(stmt, "");
+        }
+    }
+
+    fn check_call_expression(&mut self, call: &CallExpression) {
+        // Check if the callee is an identifier that matches our pattern
+        match &call.callee {
+            Expression::Identifier(id) => {
+                let func_name = id.name.as_str();
+                if let Some(captures) = self.validator_pattern.captures(func_name) {
+                    if let Some(interface_name) = captures.get(1) {
+                        // Found a validator function call
+                        self.validator_functions.push(ValidatorFunction {
+                            name: func_name.to_string(),
+                            interface_name: interface_name.as_str().to_string(),
+                        });
+                    }
+                }
+            }
+            _ => {
+                // Debug: log other types of callees we might be missing
+                if std::env::var("BAGSAKAN_DEBUG").is_ok() {
+                    match &call.callee {
+                        Expression::StaticMemberExpression(member) => {
+                            eprintln!("DEBUG: Static member callee: {}", member.property.name);
+                        }
+                        Expression::ComputedMemberExpression(_) => {
+                            eprintln!("DEBUG: Computed member expression callee");
+                        }
+                        _ => {
+                            eprintln!("DEBUG: Other callee type in call expression");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Process arguments for nested calls
+        for arg in &call.arguments {
+            match arg {
+                Argument::SpreadElement(spread) => {
+                    self.process_expression(&spread.argument);
+                }
+                _ => {
+                    if let Some(expr) = arg.as_expression() {
+                        self.process_expression(expr);
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_class(&mut self, class: &Class) {
+        let body = &class.body;
+        for member in &body.body {
+            match member {
+                ClassElement::MethodDefinition(method) => {
+                    // Check method body for validator calls
+                    if let Some(body) = &method.value.body {
+                        self.process_function_body(body);
+                    }
+                }
+                ClassElement::PropertyDefinition(prop) => {
+                    if let Some(value) = &prop.value {
+                        self.process_expression(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn process_variable_declaration(&mut self, var_decl: &VariableDeclaration) {
+        for decl in &var_decl.declarations {
+            if let VariableDeclarator {
+                init: Some(init), ..
+            } = &decl
+            {
+                self.process_expression(init);
+            }
+        }
+    }
+
+    fn process_expression(&mut self, expr: &Expression) {
+        match expr {
+            Expression::FunctionExpression(func) => {
+                // Check function body for validator calls
+                if let Some(body) = &func.body {
+                    self.process_function_body(body);
+                }
+            }
+            Expression::ArrowFunctionExpression(arrow) => {
+                // Check arrow function body for validator calls
+                self.process_function_body(&arrow.body);
+            }
+            Expression::CallExpression(call) => {
+                self.check_call_expression(call);
+            }
+            Expression::ObjectExpression(obj) => {
+                for prop in &obj.properties {
+                    if let ObjectPropertyKind::ObjectProperty(obj_prop) = prop {
+                        self.process_expression(&obj_prop.value);
+                    }
+                }
+            }
+            Expression::UnaryExpression(unary) => {
+                // Handle expressions like !validateUser(data)
+                self.process_expression(&unary.argument);
+            }
+            Expression::BinaryExpression(binary) => {
+                // Handle expressions like validateUser(data) && other
+                self.process_expression(&binary.left);
+                self.process_expression(&binary.right);
+            }
+            Expression::LogicalExpression(logical) => {
+                // Handle expressions like validateUser(data) || validateProduct(data)
+                self.process_expression(&logical.left);
+                self.process_expression(&logical.right);
+            }
+            _ => {}
+        }
     }
 }
 
