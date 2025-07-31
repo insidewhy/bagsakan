@@ -24,8 +24,23 @@ pub struct ValidatorFunction {
     pub interface_name: String,
 }
 
+pub struct EnumInfo {
+    pub members: Vec<EnumMember>,
+}
+
+pub struct EnumMember {
+    pub value: EnumValue,
+}
+
+pub enum EnumValue {
+    String(String),
+    Number(f64),
+    Computed,
+}
+
 pub struct TypeScriptParser {
     pub interfaces: HashMap<String, InterfaceInfo>,
+    pub enums: HashMap<String, EnumInfo>,
     pub validator_functions: Vec<ValidatorFunction>,
     validator_pattern: Regex,
 }
@@ -34,6 +49,7 @@ impl TypeScriptParser {
     pub fn new(pattern: &str) -> Self {
         Self {
             interfaces: HashMap::new(),
+            enums: HashMap::new(),
             validator_functions: Vec::new(),
             validator_pattern: Regex::new(pattern).unwrap(),
         }
@@ -105,6 +121,9 @@ impl TypeScriptParser {
             Declaration::TSInterfaceDeclaration(interface) => {
                 self.process_interface(interface, file_path);
             }
+            Declaration::TSEnumDeclaration(enum_decl) => {
+                self.process_enum(enum_decl);
+            }
             Declaration::FunctionDeclaration(func) => {
                 // Check function body for validator calls
                 if let Some(body) = &func.body {
@@ -119,6 +138,36 @@ impl TypeScriptParser {
             }
             _ => {}
         }
+    }
+
+    fn process_enum(&mut self, enum_decl: &TSEnumDeclaration) {
+        let enum_name = enum_decl.id.name.as_str().to_string();
+        let mut members = Vec::new();
+        let mut next_numeric_value = 0.0;
+
+        for member in &enum_decl.body.members {
+            let value = if let Some(init) = &member.initializer {
+                match init {
+                    Expression::StringLiteral(lit) => {
+                        EnumValue::String(lit.value.as_str().to_string())
+                    }
+                    Expression::NumericLiteral(lit) => {
+                        next_numeric_value = lit.value + 1.0;
+                        EnumValue::Number(lit.value)
+                    }
+                    _ => EnumValue::Computed,
+                }
+            } else {
+                // For numeric enums without initializers, use auto-increment
+                let current_value = next_numeric_value;
+                next_numeric_value += 1.0;
+                EnumValue::Number(current_value)
+            };
+
+            members.push(EnumMember { value });
+        }
+
+        self.enums.insert(enum_name, EnumInfo { members });
     }
 
     fn process_interface(&mut self, interface: &TSInterfaceDeclaration, file_path: &str) {

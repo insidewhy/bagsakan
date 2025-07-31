@@ -1,6 +1,6 @@
 {
   "name": "bagsakan",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Generate TypeScript validation functions from interfaces",
   "bin": {
     "bagsakan": "./bin/bagsakan"

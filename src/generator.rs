@@ -1,17 +1,23 @@
-use crate::parser::{InterfaceInfo, PropertyInfo, ValidatorFunction};
+use crate::parser::{EnumInfo, EnumValue, InterfaceInfo, PropertyInfo, ValidatorFunction};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
 pub struct ValidatorGenerator {
     interfaces: HashMap<String, InterfaceInfo>,
+    enums: HashMap<String, EnumInfo>,
     use_js_extensions: bool,
 }
 
 impl ValidatorGenerator {
-    pub fn new(interfaces: HashMap<String, InterfaceInfo>, use_js_extensions: bool) -> Self {
+    pub fn new(
+        interfaces: HashMap<String, InterfaceInfo>,
+        enums: HashMap<String, EnumInfo>,
+        use_js_extensions: bool,
+    ) -> Self {
         Self {
             interfaces,
+            enums,
             use_js_extensions,
         }
     }
@@ -163,7 +169,7 @@ impl ValidatorGenerator {
         body.push_str("  if (typeof value !== 'object' || value === null) {\n");
         body.push_str("    return false;\n");
         body.push_str("  }\n\n");
-        body.push_str(&format!("  const obj = value as {};\n\n", interface.name));
+        body.push_str(&format!("  const obj = value as {};\n", interface.name));
 
         for prop in &interface.properties {
             body.push_str(&self.generate_property_check(prop));
@@ -187,9 +193,16 @@ impl ValidatorGenerator {
                 "string" | "number" | "boolean" | "null" | "undefined"
             );
             if needs_complex_check {
+                // Check if validation already has outer parentheses
+                let wrapped_validation = if validation.starts_with('(') && validation.ends_with(')')
+                {
+                    format!("!{}", validation)
+                } else {
+                    format!("!({})", validation)
+                };
                 check.push_str(&format!(
-                    "  if (obj.{} !== undefined && !({})) {{\n",
-                    prop.name, validation
+                    "  if (obj.{} !== undefined && {}) {{\n",
+                    prop.name, wrapped_validation
                 ));
             } else {
                 let negated_validation = self
@@ -200,15 +213,22 @@ impl ValidatorGenerator {
                 ));
             }
             check.push_str("    return false;\n");
-            check.push_str("  }\n\n");
+            check.push_str("  }\n");
         } else {
             // For required properties, we can skip the 'in' check if the type check would fail for undefined
             let needs_in_check = self.type_allows_undefined(&prop.type_annotation);
 
             if needs_in_check {
+                // Check if validation already has outer parentheses
+                let wrapped_validation = if validation.starts_with('(') && validation.ends_with(')')
+                {
+                    format!("!{}", validation)
+                } else {
+                    format!("!({})", validation)
+                };
                 check.push_str(&format!(
-                    "  if (!('{}' in obj) || !({})) {{\n",
-                    prop.name, validation
+                    "  if (!('{}' in obj) || {}) {{\n",
+                    prop.name, wrapped_validation
                 ));
             } else {
                 // For simple type checks, we can negate directly
@@ -217,7 +237,7 @@ impl ValidatorGenerator {
                 check.push_str(&format!("  if ({}) {{\n", negated_validation));
             }
             check.push_str("    return false;\n");
-            check.push_str("  }\n\n");
+            check.push_str("  }\n");
         }
 
         check
@@ -267,10 +287,150 @@ impl ValidatorGenerator {
             _ => {
                 if self.interfaces.contains_key(type_str) {
                     format!("validate{}({})", type_str, value_expr)
+                } else if let Some(enum_info) = self.enums.get(type_str) {
+                    // Generate enum validation
+                    self.generate_enum_validation(enum_info, value_expr)
                 } else {
                     "true".to_string()
                 }
             }
+        }
+    }
+
+    fn generate_enum_validation_negated(&self, enum_info: &EnumInfo, value_expr: &str) -> String {
+        // Generate validation that returns true when the value is NOT a valid enum member
+        let mut numeric_values: Vec<i64> = Vec::new();
+        let mut string_checks: Vec<String> = Vec::new();
+
+        for member in &enum_info.members {
+            match &member.value {
+                EnumValue::Number(n) => {
+                    if n.fract() == 0.0 {
+                        numeric_values.push(*n as i64);
+                    }
+                }
+                EnumValue::String(s) => {
+                    string_checks.push(format!("{} !== '{}'", value_expr, s));
+                }
+                EnumValue::Computed => {}
+            }
+        }
+
+        let mut checks: Vec<String> = Vec::new();
+
+        // Handle numeric values
+        if !numeric_values.is_empty() {
+            numeric_values.sort();
+
+            let mut i = 0;
+            while i < numeric_values.len() {
+                let start = numeric_values[i];
+                let mut end = start;
+
+                // Find consecutive sequence
+                while i + 1 < numeric_values.len() && numeric_values[i + 1] == end + 1 {
+                    end = numeric_values[i + 1];
+                    i += 1;
+                }
+
+                // Use range if we have 3 or more consecutive values
+                if end - start >= 2 {
+                    // Range checks don't need extra parentheses
+                    checks.push(format!(
+                        "{} < {} || {} > {}",
+                        value_expr, start, value_expr, end
+                    ));
+                } else {
+                    // Use individual checks for small ranges
+                    for val in start..=end {
+                        checks.push(format!("{} !== {}", value_expr, val));
+                    }
+                }
+
+                i += 1;
+            }
+        }
+
+        // Add string checks
+        checks.extend(string_checks);
+
+        if checks.is_empty() {
+            format!("{} === undefined", value_expr)
+        } else if checks.len() == 1 {
+            checks[0].clone()
+        } else {
+            // Use AND because all conditions must be true for invalid value
+            // Join without wrapping in parentheses - they'll be added by the if statement
+            checks.join(" && ")
+        }
+    }
+
+    fn generate_enum_validation(&self, enum_info: &EnumInfo, value_expr: &str) -> String {
+        // Collect numeric and string values separately
+        let mut numeric_values: Vec<i64> = Vec::new();
+        let mut string_values: Vec<String> = Vec::new();
+
+        for member in &enum_info.members {
+            match &member.value {
+                EnumValue::Number(n) => {
+                    // Convert to i64 for integer comparison
+                    if n.fract() == 0.0 {
+                        numeric_values.push(*n as i64);
+                    }
+                }
+                EnumValue::String(s) => {
+                    string_values.push(format!("{} === '{}'", value_expr, s));
+                }
+                EnumValue::Computed => {} // Skip computed values
+            }
+        }
+
+        let mut checks: Vec<String> = Vec::new();
+
+        // Handle numeric values - look for consecutive ranges
+        if !numeric_values.is_empty() {
+            numeric_values.sort();
+
+            let mut i = 0;
+            while i < numeric_values.len() {
+                let start = numeric_values[i];
+                let mut end = start;
+
+                // Find consecutive sequence
+                while i + 1 < numeric_values.len() && numeric_values[i + 1] == end + 1 {
+                    end = numeric_values[i + 1];
+                    i += 1;
+                }
+
+                // Use range if we have 3 or more consecutive values
+                if end - start >= 2 {
+                    checks.push(format!(
+                        "{} >= {} && {} <= {}",
+                        value_expr, start, value_expr, end
+                    ));
+                } else {
+                    // Use individual checks for small ranges
+                    for val in start..=end {
+                        checks.push(format!("{} === {}", value_expr, val));
+                    }
+                }
+
+                i += 1;
+            }
+        }
+
+        // Add string value checks
+        checks.extend(string_values);
+
+        if checks.is_empty() {
+            // If all enum values are computed, fall back to basic check
+            format!("{} !== undefined", value_expr)
+        } else if checks.len() == 1 {
+            // Single check doesn't need wrapping parentheses
+            checks[0].clone()
+        } else {
+            // Multiple checks need parentheses for grouping
+            format!("({})", checks.join(" || "))
         }
     }
 
@@ -320,9 +480,37 @@ impl ValidatorGenerator {
             "null" => format!("{} !== null", value_expr),
             "undefined" => format!("{} !== undefined", value_expr),
             _ => {
-                // For complex types, fall back to negating the validation
-                let validation = self.get_inline_validation(type_str, value_expr);
-                format!("!({})", validation)
+                // Check if it's a union type
+                if type_str.contains(" | ") {
+                    let types: Vec<&str> = type_str.split(" | ").collect();
+                    let checks: Vec<String> = types
+                        .iter()
+                        .map(|t| {
+                            if t.starts_with('\'') && t.ends_with('\'') {
+                                format!("{} !== {}", value_expr, t)
+                            } else {
+                                self.get_negated_validation(t, value_expr)
+                            }
+                        })
+                        .collect();
+                    if checks.len() == 1 {
+                        checks[0].clone()
+                    } else {
+                        checks.join(" && ")
+                    }
+                } else if let Some(enum_info) = self.enums.get(type_str) {
+                    // Check if it's an enum type
+                    self.generate_enum_validation_negated(enum_info, value_expr)
+                } else {
+                    // For complex types, fall back to negating the validation
+                    let validation = self.get_inline_validation(type_str, value_expr);
+                    // Check if validation already has outer parentheses
+                    if validation.starts_with('(') && validation.ends_with(')') {
+                        format!("!{}", validation)
+                    } else {
+                        format!("!({})", validation)
+                    }
+                }
             }
         }
     }

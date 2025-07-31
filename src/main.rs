@@ -79,7 +79,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             unique_validators.len()
         );
 
-        let generator = ValidatorGenerator::new(parser.interfaces, config.use_js_extensions);
+        let generator =
+            ValidatorGenerator::new(parser.interfaces, parser.enums, config.use_js_extensions);
         let output =
             generator.generate_validators(&parser.validator_functions, &config.validator_file);
 

@@ -12,7 +12,8 @@
       "Bash(/home/james/projects/bagsakan/target/release/bagsakan:*)",
       "Bash(./target/release/bagsakan)",
       "Bash(pushd:*)",
-      "Bash(popd:*)"
+      "Bash(popd:*)",
+      "Bash(pnpm tsx:*)"
     ],
     "deny": []
   }
