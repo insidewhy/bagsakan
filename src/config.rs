@@ -16,6 +16,15 @@ pub struct Config {
 
     #[serde(default = "default_use_js_extensions")]
     pub use_js_extensions: bool,
+
+    #[serde(default = "default_follow_external_imports")]
+    pub follow_external_imports: bool,
+
+    #[serde(default)]
+    pub exclude_packages: Vec<String>,
+
+    #[serde(default)]
+    pub conditions: Vec<String>,
 }
 
 fn default_validator_pattern() -> String {
@@ -34,6 +43,10 @@ fn default_use_js_extensions() -> bool {
     false
 }
 
+fn default_follow_external_imports() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -41,6 +54,9 @@ impl Default for Config {
             source_files: default_source_files(),
             validator_file: default_validator_file(),
             use_js_extensions: default_use_js_extensions(),
+            follow_external_imports: default_follow_external_imports(),
+            exclude_packages: Vec::new(),
+            conditions: Vec::new(),
         }
     }
 }

@@ -95,31 +95,107 @@ impl ValidatorGenerator {
         for interface_name in &referenced_types {
             if let Some(interface) = self.interfaces.get(interface_name) {
                 let source_path = Path::new(&interface.file_path);
+                let source_path_str = source_path.to_string_lossy();
 
-                // Calculate relative path from output file to source file
-                let relative_path = if let Some(rel) = pathdiff::diff_paths(source_path, output_dir)
-                {
-                    rel
+                // Check if this is an external package or a local file
+                let import_path = if source_path_str.contains("node_modules") {
+                    // For node_modules, extract the package import path
+                    // Look for pattern like "node_modules/package-name/path/to/file"
+                    if let Some(pos) = source_path_str.find("node_modules/") {
+                        let after_node_modules = &source_path_str[pos + 13..]; // Skip "node_modules/"
+
+                        // Clean up any ./ prefix in the path
+                        let cleaned = after_node_modules.replace("/./", "/");
+
+                        // Remove file extension (.d.ts, .ts, .js, etc)
+                        let without_ext = if cleaned.ends_with(".d.ts") {
+                            &cleaned[..cleaned.len() - 5]
+                        } else if let Some(dot_pos) = cleaned.rfind('.') {
+                            &cleaned[..dot_pos]
+                        } else {
+                            &cleaned[..]
+                        };
+
+                        // Handle scoped packages and regular packages
+                        let parts: Vec<&str> = without_ext.split('/').collect();
+                        if parts.is_empty() {
+                            // Fallback to relative path
+                            self.calculate_relative_import_path(source_path, output_dir)
+                        } else if parts[0].starts_with('@') && parts.len() > 2 {
+                            // Scoped package like @org/package/subpath
+                            format!("{}/{}", parts[0], parts[1..].join("/"))
+                        } else if parts.len() > 1 {
+                            // Regular package like package/subpath
+                            parts.join("/")
+                        } else {
+                            // Just the package name
+                            parts[0].to_string()
+                        }
+                    } else {
+                        // Fallback to relative path
+                        self.calculate_relative_import_path(source_path, output_dir)
+                    }
                 } else {
-                    source_path.to_path_buf()
+                    // Check if the path is outside the current working directory
+                    // This handles symlinked packages and monorepo scenarios
+                    let cwd = std::env::current_dir().unwrap_or_default();
+                    if !source_path.starts_with(&cwd) {
+                        // This is likely a symlinked package
+                        // Try to extract package name from the path
+                        // Look for common patterns like /lib/package-name/ or /packages/package-name/
+                        let path_str = source_path_str.replace('\\', "/");
+
+                        // Find package name by looking for common monorepo patterns
+                        if let Some(package_match) = path_str.split('/').rev().find_map(|part| {
+                            // Look for user-messaging-types or similar package names
+                            if part.contains("-types") || part.contains("-api") {
+                                Some(part)
+                            } else {
+                                None
+                            }
+                        }) {
+                            // Found a package name, now extract the path within the package
+                            if let Some(package_pos) =
+                                path_str.rfind(&format!("/{}/", package_match))
+                            {
+                                let after_package =
+                                    &path_str[package_pos + package_match.len() + 2..];
+
+                                // Remove file extension and src/ prefix if present
+                                let mut clean_path = after_package;
+                                if clean_path.starts_with("src/") {
+                                    clean_path = &clean_path[4..];
+                                }
+
+                                let without_ext = if clean_path.ends_with(".d.ts") {
+                                    &clean_path[..clean_path.len() - 5]
+                                } else if let Some(dot_pos) = clean_path.rfind('.') {
+                                    &clean_path[..dot_pos]
+                                } else {
+                                    clean_path
+                                };
+
+                                // Add .js extension if configured
+                                let import_specifier = if self.use_js_extensions {
+                                    format!("{}.js", without_ext)
+                                } else {
+                                    without_ext.to_string()
+                                };
+
+                                format!("{}/{}", package_match, import_specifier)
+                            } else {
+                                // Fallback to relative path
+                                self.calculate_relative_import_path(source_path, output_dir)
+                            }
+                        } else {
+                            // Fallback to relative path
+                            self.calculate_relative_import_path(source_path, output_dir)
+                        }
+                    } else {
+                        // For local files within the project, use relative path
+                        self.calculate_relative_import_path(source_path, output_dir)
+                    }
                 };
-
-                // Convert to import path (remove .ts extension and use forward slashes)
-                let mut import_path = relative_path
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .trim_end_matches(".ts")
-                    .to_string();
-
-                // Add ./ prefix if not already present
-                if !import_path.starts_with("./") && !import_path.starts_with("../") {
-                    import_path = format!("./{}", import_path);
-                }
-
-                // Add .js extension if configured
-                if self.use_js_extensions {
-                    import_path.push_str(".js");
-                }
 
                 imports_by_file
                     .entry(import_path)
@@ -142,6 +218,37 @@ impl ValidatorGenerator {
         imports.sort();
 
         imports.join("\n")
+    }
+
+    fn calculate_relative_import_path(&self, source_path: &Path, output_dir: &Path) -> String {
+        // Calculate relative path from output file to source file
+        let relative_path = if let Some(rel) = pathdiff::diff_paths(source_path, output_dir) {
+            rel
+        } else {
+            source_path.to_path_buf()
+        };
+
+        // Convert to import path (remove extension and use forward slashes)
+        let mut import_path = relative_path.to_string_lossy().replace('\\', "/");
+
+        // Remove extension (.ts, .tsx, .d.ts, etc)
+        if let Some(pos) = import_path.rfind('.') {
+            import_path = import_path[..pos].to_string();
+        } else {
+            import_path = import_path.to_string();
+        }
+
+        // Add ./ prefix if not already present
+        if !import_path.starts_with("./") && !import_path.starts_with("../") {
+            import_path = format!("./{}", import_path);
+        }
+
+        // Add .js extension if configured
+        if self.use_js_extensions {
+            import_path.push_str(".js");
+        }
+
+        import_path
     }
 
     fn collect_referenced_types(&self, type_str: &str, referenced_types: &mut HashSet<String>) {
@@ -285,13 +392,30 @@ impl ValidatorGenerator {
                 format!("({} === {})", value_expr, type_str)
             }
             _ => {
-                if self.interfaces.contains_key(type_str) {
-                    format!("validate{}({})", type_str, value_expr)
-                } else if let Some(enum_info) = self.enums.get(type_str) {
-                    // Generate enum validation
-                    self.generate_enum_validation(enum_info, value_expr)
-                } else {
-                    "true".to_string()
+                // Check for known built-in types
+                match type_str {
+                    "Date" => format!("{} instanceof Date", value_expr),
+                    "Record" => format!(
+                        "typeof {} === 'object' && {} !== null",
+                        value_expr, value_expr
+                    ),
+                    _ => {
+                        // Check for generic types like Record<K, V>
+                        if type_str.starts_with("Record<") && type_str.ends_with(">") {
+                            format!(
+                                "typeof {} === 'object' && {} !== null",
+                                value_expr, value_expr
+                            )
+                        } else if self.interfaces.contains_key(type_str) {
+                            format!("validate{}({})", type_str, value_expr)
+                        } else if let Some(enum_info) = self.enums.get(type_str) {
+                            // Generate enum validation
+                            self.generate_enum_validation(enum_info, value_expr)
+                        } else {
+                            // Unknown type - be conservative and check it's not undefined
+                            format!("{} !== undefined", value_expr)
+                        }
+                    }
                 }
             }
         }

@@ -1,6 +1,6 @@
 [package]
 name = "bagsakan"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "A Rust-based utility to generate typescript validator functions from typescript type definitions"
 license = "MIT"
@@ -17,8 +17,10 @@ oxc_allocator = "0.78.0"
 oxc_span = "0.78.0"
 oxc_syntax = "0.78.0"
 oxc_traverse = "0.78.0"
+oxc_resolver = "3.0"
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 glob = "0.3"
 regex = "1.10"
 clap = { version = "4", features = ["derive"] }

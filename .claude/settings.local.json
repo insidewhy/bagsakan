@@ -13,7 +13,15 @@
       "Bash(./target/release/bagsakan)",
       "Bash(pushd:*)",
       "Bash(popd:*)",
-      "Bash(pnpm tsx:*)"
+      "Bash(pnpm tsx:*)",
+      "Bash(BAGSAKAN_DEBUG=1 cargo run -- -c test_src/bagsakan.toml)",
+      "Bash(BAGSAKAN_DEBUG=1 ../target/debug/bagsakan)",
+      "Bash(../target/debug/bagsakan)",
+      "Bash(./target/debug/bagsakan:*)",
+      "Bash(BAGSAKAN_DEBUG=1 bagsakan)",
+      "Bash(BAGSAKAN_DEBUG=1 /home/james/projects/bagsakan/target/debug/bagsakan)",
+      "Bash(./target/debug/test_resolver)",
+      "Bash(pnpm run:*)"
     ],
     "deny": []
   }

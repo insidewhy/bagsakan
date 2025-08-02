@@ -1,11 +1,12 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::Parser;
+use oxc_resolver::{ResolveOptions, Resolver};
 use oxc_span::SourceType;
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct InterfaceInfo {
     pub name: String,
@@ -43,19 +44,124 @@ pub struct TypeScriptParser {
     pub enums: HashMap<String, EnumInfo>,
     pub validator_functions: Vec<ValidatorFunction>,
     validator_pattern: Regex,
+    parsed_files: HashSet<PathBuf>,
+    source_files: HashSet<PathBuf>,
+    current_file_is_source: bool,
+    resolver: Resolver,
+    follow_external_imports: bool,
+    exclude_packages: Vec<String>,
 }
 
 impl TypeScriptParser {
-    pub fn new(pattern: &str) -> Self {
+    pub fn new(
+        pattern: &str,
+        follow_external_imports: bool,
+        exclude_packages: Vec<String>,
+        export_conditions: Vec<String>,
+    ) -> Self {
+        let mut resolve_options = ResolveOptions::default();
+
+        // Configure for TypeScript resolution
+        resolve_options.extensions = vec![
+            ".ts".to_string(),
+            ".tsx".to_string(),
+            ".d.ts".to_string(),
+            ".js".to_string(),
+            ".jsx".to_string(),
+            ".json".to_string(),
+        ];
+
+        // Enable TypeScript mode for proper .js -> .ts resolution
+        resolve_options.extension_alias = vec![
+            (
+                ".js".to_string(),
+                vec![".ts".to_string(), ".tsx".to_string(), ".js".to_string()],
+            ),
+            (
+                ".jsx".to_string(),
+                vec![".tsx".to_string(), ".jsx".to_string()],
+            ),
+            (
+                ".mjs".to_string(),
+                vec![".mts".to_string(), ".mjs".to_string()],
+            ),
+            (
+                ".cjs".to_string(),
+                vec![".cts".to_string(), ".cjs".to_string()],
+            ),
+        ];
+
+        // Enable exports field support
+        resolve_options.exports_fields = vec![vec!["exports".to_string()]];
+
+        // Set main fields for module resolution
+        resolve_options.main_fields = vec![
+            "types".to_string(),
+            "typings".to_string(),
+            "module".to_string(),
+            "main".to_string(),
+        ];
+
+        // Enable resolving index files
+        resolve_options.main_files = vec!["index".to_string()];
+
+        // Prefer relative imports to resolve as-is
+        resolve_options.prefer_relative = true;
+
+        // Set export conditions (e.g., "dev", "production", "import", "require")
+
+        if !export_conditions.is_empty() {
+            // Add custom conditions first, then default ones
+            let mut conditions = export_conditions;
+            conditions.push("types".to_string());
+            conditions.push("import".to_string());
+            conditions.push("node".to_string());
+            conditions.push("default".to_string());
+            resolve_options.condition_names = conditions;
+        } else {
+            // Default conditions for TypeScript/Node.js
+            resolve_options.condition_names = vec![
+                "types".to_string(),
+                "import".to_string(),
+                "node".to_string(),
+                "default".to_string(),
+            ];
+        }
+
         Self {
             interfaces: HashMap::new(),
             enums: HashMap::new(),
             validator_functions: Vec::new(),
             validator_pattern: Regex::new(pattern).unwrap(),
+            parsed_files: HashSet::new(),
+            source_files: HashSet::new(),
+            current_file_is_source: false,
+            resolver: Resolver::new(resolve_options),
+            follow_external_imports,
+            exclude_packages,
+        }
+    }
+
+    pub fn mark_as_source_file(&mut self, path: &Path) {
+        if let Ok(canonical_path) = path.canonicalize() {
+            self.source_files.insert(canonical_path);
         }
     }
 
     pub fn parse_file(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        // Get canonical path to avoid parsing the same file twice
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+        // Skip if already parsed
+        if self.parsed_files.contains(&canonical_path) {
+            return Ok(());
+        }
+
+        self.parsed_files.insert(canonical_path.clone());
+
+        // Check if this is a source file
+        self.current_file_is_source = self.source_files.contains(&canonical_path);
+
         let source_text = fs::read_to_string(path)?;
         let allocator = Allocator::default();
         let source_type = SourceType::from_path(path).unwrap_or(SourceType::default());
@@ -69,9 +175,140 @@ impl TypeScriptParser {
         }
 
         let file_path_str = path.to_string_lossy().to_string();
+
+        // Collect imports before processing the program
+        let imports = self.collect_imports(&result.program);
+
+        if std::env::var("BAGSAKAN_DEBUG").is_ok() && !imports.is_empty() {
+            eprintln!("Found imports in {:?}: {:?}", path, imports);
+        }
+
         self.process_program(&result.program, &file_path_str);
 
+        // Parse imported files
+        for import_path in imports {
+            match self.resolve_import(path, &import_path) {
+                Ok(resolved_path) => {
+                    if std::env::var("BAGSAKAN_DEBUG").is_ok() {
+                        eprintln!("Resolved '{}' to {:?}", import_path, resolved_path);
+                    }
+                    let _ = self.parse_file(&resolved_path);
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+
+                    // Provide helpful error messages
+                    if error_msg.contains("node_modules without .d.ts") {
+                        eprintln!("Warning: No TypeScript definitions found for '{}'. Consider installing @types package.", import_path);
+                    } else if error_msg.contains("Package") && error_msg.contains("excluded") {
+                        // Silently skip excluded packages
+                    } else if error_msg.contains("External imports are disabled") {
+                        // Silently skip when external imports are disabled
+                    } else if std::env::var("BAGSAKAN_DEBUG").is_ok() {
+                        eprintln!(
+                            "Failed to resolve import '{}' from {:?}: {}",
+                            import_path, path, e
+                        );
+
+                        // Provide suggestions
+                        if !import_path.starts_with(".") {
+                            eprintln!("  Hint: Make sure the package is installed in node_modules");
+                            if !import_path.starts_with("@types/") {
+                                eprintln!(
+                                    "  Hint: Try installing @types/{} if it's a JavaScript package",
+                                    import_path.split('/').next().unwrap_or(&import_path)
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    fn collect_imports(&self, program: &Program) -> Vec<String> {
+        let mut imports = Vec::new();
+
+        for stmt in &program.body {
+            if let Some(module_decl) = stmt.as_module_declaration() {
+                match module_decl {
+                    ModuleDeclaration::ImportDeclaration(import) => {
+                        imports.push(import.source.value.as_str().to_string());
+                    }
+                    ModuleDeclaration::ExportNamedDeclaration(export) => {
+                        if let Some(source) = &export.source {
+                            imports.push(source.value.as_str().to_string());
+                        }
+                    }
+                    ModuleDeclaration::ExportAllDeclaration(export) => {
+                        imports.push(export.source.value.as_str().to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        imports
+    }
+
+    pub fn resolve_import(
+        &self,
+        current_file: &Path,
+        import_path: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let current_dir = current_file.parent().ok_or("No parent directory")?;
+        // oxc_resolver needs absolute paths to work correctly
+        let current_dir = current_dir
+            .canonicalize()
+            .unwrap_or_else(|_| current_dir.to_path_buf());
+
+        // Check if we should follow external imports
+        if !import_path.starts_with(".") && !import_path.starts_with("/") {
+            if !self.follow_external_imports {
+                return Err("External imports are disabled".into());
+            }
+
+            // Check if package is excluded
+            let package_name = if import_path.contains('/') {
+                import_path.split('/').next().unwrap_or("")
+            } else {
+                import_path
+            };
+
+            if self.exclude_packages.iter().any(|excluded| {
+                package_name == excluded || import_path.starts_with(&format!("{}/", excluded))
+            }) {
+                return Err(format!("Package '{}' is excluded", package_name).into());
+            }
+        }
+
+        // Use oxc_resolver to resolve the import
+        if std::env::var("BAGSAKAN_DEBUG").is_ok() {
+            eprintln!(
+                "Attempting to resolve '{}' from {:?}",
+                import_path, current_dir
+            );
+        }
+
+        match self.resolver.resolve(current_dir, import_path) {
+            Ok(resolution) => {
+                let path = resolution.into_path_buf();
+
+                if std::env::var("BAGSAKAN_DEBUG").is_ok() {
+                    eprintln!("  oxc_resolver found: {:?}", path);
+                }
+
+                Ok(path)
+            }
+            Err(e) => {
+                if std::env::var("BAGSAKAN_DEBUG").is_ok() {
+                    eprintln!("  oxc_resolver error: {:?}", e);
+                }
+                Err(format!("Failed to resolve '{}': {:?}", import_path, e).into())
+            }
+        }
     }
 
     fn process_program(&mut self, program: &Program, file_path: &str) {
@@ -106,10 +343,28 @@ impl TypeScriptParser {
                 if let Some(decl) = stmt.as_declaration() {
                     self.process_declaration(decl, file_path);
                 } else if let Some(module_decl) = stmt.as_module_declaration() {
-                    if let ModuleDeclaration::ExportNamedDeclaration(export) = module_decl {
-                        if let Some(decl) = &export.declaration {
-                            self.process_declaration(decl, file_path);
+                    match module_decl {
+                        ModuleDeclaration::ExportNamedDeclaration(export) => {
+                            if let Some(decl) = &export.declaration {
+                                self.process_declaration(decl, file_path);
+                            }
+
+                            // Debug: log export specifiers
+                            if std::env::var("BAGSAKAN_DEBUG").is_ok()
+                                && !export.specifiers.is_empty()
+                            {
+                                for _spec in &export.specifiers {
+                                    eprintln!("Export specifier found in {}", file_path);
+                                }
+                            }
                         }
+                        ModuleDeclaration::ExportDefaultDeclaration(_export) => {
+                            // Handle default exports if needed
+                            if std::env::var("BAGSAKAN_DEBUG").is_ok() {
+                                eprintln!("Default export found in {}", file_path);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -220,11 +475,13 @@ impl TypeScriptParser {
                 let func_name = id.name.as_str();
                 if let Some(captures) = self.validator_pattern.captures(func_name) {
                     if let Some(interface_name) = captures.get(1) {
-                        // Found a validator function call
-                        self.validator_functions.push(ValidatorFunction {
-                            name: func_name.to_string(),
-                            interface_name: interface_name.as_str().to_string(),
-                        });
+                        // Only collect validator functions from source files
+                        if self.current_file_is_source {
+                            self.validator_functions.push(ValidatorFunction {
+                                name: func_name.to_string(),
+                                interface_name: interface_name.as_str().to_string(),
+                            });
+                        }
                     }
                 }
             }
@@ -355,7 +612,19 @@ fn get_type_string(ts_type: &TSType) -> String {
         },
         TSType::TSTypeReference(type_ref) => {
             if let TSTypeName::IdentifierReference(id) = &type_ref.type_name {
-                id.name.as_str().to_string()
+                let base_type = id.name.as_str();
+
+                // Handle generic types with type arguments
+                if let Some(type_args) = &type_ref.type_arguments {
+                    let arg_types: Vec<String> = type_args
+                        .params
+                        .iter()
+                        .map(|param| get_type_string(param))
+                        .collect();
+                    format!("{}<{}>", base_type, arg_types.join(", "))
+                } else {
+                    base_type.to_string()
+                }
             } else {
                 "unknown".to_string()
             }

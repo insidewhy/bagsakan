@@ -1,0 +1,7 @@
+validatorPattern = "validate%(type)"
+sourceFiles = "*.ts"
+validatorFile = "validators.ts"
+useJsExtensions = false
+followExternalImports = true
+excludePackages = []
+conditions = ["dev"]

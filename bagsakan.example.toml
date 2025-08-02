@@ -1,0 +1,26 @@
+# Example bagsakan configuration file
+
+# Pattern for validator function names
+# %(type) will be replaced with the interface name
+validatorPattern = "validate%(type)"
+
+# Glob pattern for TypeScript source files
+sourceFiles = "src/**/*.ts"
+
+# Output file for generated validators
+validatorFile = "src/validators.ts"
+
+# Whether to use .js extensions in imports (for ESM)
+useJsExtensions = false
+
+# Whether to follow and parse external package imports
+# Set to false to only generate validators for local interfaces
+followExternalImports = true
+
+# List of packages to exclude from import resolution
+# Useful for packages that have issues or are not needed
+excludePackages = [
+    # "react",
+    # "lodash",
+    # "@internal/private-package"
+]
