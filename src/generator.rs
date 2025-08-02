@@ -298,7 +298,8 @@ impl ValidatorGenerator {
             let needs_complex_check = !matches!(
                 prop.type_annotation.as_str(),
                 "string" | "number" | "boolean" | "null" | "undefined"
-            );
+            ) && !prop.type_annotation.starts_with('\'')
+                && !prop.type_annotation.contains(" | ");
             if needs_complex_check {
                 // Check if validation already has outer parentheses
                 let wrapped_validation = if validation.starts_with('(') && validation.ends_with(')')
@@ -603,6 +604,10 @@ impl ValidatorGenerator {
             "boolean" => format!("typeof {} !== 'boolean'", value_expr),
             "null" => format!("{} !== null", value_expr),
             "undefined" => format!("{} !== undefined", value_expr),
+            _ if type_str.starts_with('\'') && type_str.ends_with('\'') => {
+                // Handle string literals
+                format!("{} !== {}", value_expr, type_str)
+            }
             _ => {
                 // Check if it's a union type
                 if type_str.contains(" | ") {
