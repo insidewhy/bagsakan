@@ -2,11 +2,12 @@ mod config;
 mod generator;
 mod parser;
 
-use clap::Parser as ClapParser;
+use clap::{Parser as ClapParser, Subcommand};
 use config::Config;
 use generator::ValidatorGenerator;
 use glob::glob;
 use parser::TypeScriptParser;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(ClapParser, Debug)]
@@ -15,12 +16,31 @@ use std::path::{Path, PathBuf};
 struct Args {
     #[arg(short, long, default_value = "bagsakan.toml")]
     config: PathBuf,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Add a validator for a specific interface
+    Add {
+        /// Name of the interface to generate a validator for
+        interface_name: String,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-
     let config = Config::from_file(&args.config)?;
+
+    match args.command {
+        Some(Commands::Add { interface_name }) => add_interface_validator(&config, &interface_name),
+        None => scan_and_generate(&config),
+    }
+}
+
+fn scan_and_generate(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     println!("Using configuration:");
     println!("  Validator pattern: {}", config.validator_pattern);
     println!("  Source files: {}", config.source_files);
@@ -144,6 +164,131 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.validator_pattern
         );
     }
+
+    Ok(())
+}
+
+fn add_interface_validator(
+    config: &Config,
+    interface_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Adding validator for interface: {}", interface_name);
+    println!("Using configuration:");
+    println!("  Validator file: {}", config.validator_file);
+    println!("  Use JS extensions: {}", config.use_js_extensions);
+    if config.follow_external_imports {
+        println!("  Follow external imports: true");
+    }
+
+    // Create a parser to find the interface
+    let pattern_regex = config.get_pattern_regex();
+    let mut parser = TypeScriptParser::new(
+        &pattern_regex,
+        config.follow_external_imports,
+        config.exclude_packages.clone(),
+        config.conditions.clone(),
+    );
+
+    println!(
+        "\nScanning TypeScript files for interface '{}'...",
+        interface_name
+    );
+
+    // Scan all source files to find the interface
+    let source_paths: Vec<_> = glob(&config.source_files)?
+        .filter_map(|entry| entry.ok())
+        .filter(|path| path.is_file())
+        .collect();
+
+    for path in &source_paths {
+        parser.mark_as_source_file(path);
+    }
+
+    for path in source_paths {
+        parser.parse_file(&path)?;
+    }
+
+    // Check if the interface was found
+    if !parser.interfaces.contains_key(interface_name) {
+        eprintln!("\nError: Interface '{}' not found.", interface_name);
+        eprintln!("\nAvailable interfaces:");
+        let mut interface_names: Vec<_> = parser.interfaces.keys().collect();
+        interface_names.sort();
+        for name in interface_names.iter().take(20) {
+            eprintln!("  - {}", name);
+        }
+        if parser.interfaces.len() > 20 {
+            eprintln!("  ... and {} more", parser.interfaces.len() - 20);
+        }
+        std::process::exit(1);
+    }
+
+    println!("\nFound interface '{}'", interface_name);
+
+    // Generate the validator function name
+    let validator_name = config.validator_pattern.replace("%(type)", interface_name);
+
+    // Read existing validators file if it exists
+    let output_path = Path::new(&config.validator_file);
+    let existing_content = if output_path.exists() {
+        fs::read_to_string(output_path)?
+    } else {
+        String::new()
+    };
+
+    // Check if validator already exists
+    if existing_content.contains(&format!("function {}", validator_name)) {
+        println!(
+            "\nValidator '{}' already exists in {}",
+            validator_name, config.validator_file
+        );
+        return Ok(());
+    }
+
+    // Parse existing validators to maintain them
+    let mut existing_validators = Vec::new();
+    if !existing_content.is_empty() {
+        // Extract existing validator functions from the file
+        for line in existing_content.lines() {
+            if line.starts_with("export function validate") {
+                if let Some(name_start) = line.find("validate") {
+                    if let Some(paren_pos) = line[name_start..].find('(') {
+                        let func_name = &line[name_start..name_start + paren_pos];
+                        if let Some(interface_name_match) = func_name.strip_prefix("validate") {
+                            existing_validators.push(parser::ValidatorFunction {
+                                name: func_name.to_string(),
+                                interface_name: interface_name_match.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Add the new validator
+    let new_validator = parser::ValidatorFunction {
+        name: validator_name.clone(),
+        interface_name: interface_name.to_string(),
+    };
+    existing_validators.push(new_validator);
+
+    // Sort validators alphabetically
+    existing_validators.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Generate the updated validators file
+    let generator =
+        ValidatorGenerator::new(parser.interfaces, parser.enums, config.use_js_extensions);
+    let output = generator.generate_validators(&existing_validators, &config.validator_file);
+
+    // Write the updated file
+    generator.write_to_file(output_path, &output)?;
+
+    println!(
+        "\nAdded validator '{}' to {}",
+        validator_name, config.validator_file
+    );
+    println!("Total validators in file: {}", existing_validators.len());
 
     Ok(())
 }

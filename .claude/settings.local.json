@@ -4,12 +4,9 @@
       "Bash(mkdir:*)",
       "Bash(cargo:*)",
       "Bash(pnpm install:*)",
-      "Bash(pnpm --dir /home/james/projects/bagsakan/test_src run test)",
       "Bash(ls:*)",
       "Bash(BAGSAKAN_DEBUG=1 cargo run)",
       "Bash(grep:*)",
-      "Bash(/home/james/projects/bagsakan/target/debug/bagsakan:*)",
-      "Bash(/home/james/projects/bagsakan/target/release/bagsakan:*)",
       "Bash(./target/release/bagsakan)",
       "Bash(pushd:*)",
       "Bash(popd:*)",
@@ -19,9 +16,13 @@
       "Bash(../target/debug/bagsakan)",
       "Bash(./target/debug/bagsakan:*)",
       "Bash(BAGSAKAN_DEBUG=1 bagsakan)",
-      "Bash(BAGSAKAN_DEBUG=1 /home/james/projects/bagsakan/target/debug/bagsakan)",
       "Bash(./target/debug/test_resolver)",
-      "Bash(pnpm run:*)"
+      "Bash(pnpm run:*)",
+      "Bash(../target/debug/bagsakan add User)",
+      "Bash(../target/debug/bagsakan add Product)",
+      "Bash(../target/debug/bagsakan add ExtendedUser)",
+      "Bash(../target/debug/bagsakan add TestAddCommand)",
+      "Bash(../target/debug/bagsakan add AnotherTestInterface)"
     ],
     "deny": []
   }
